@@ -1,0 +1,37 @@
+name: Compilar firmware
+
+# Compila o sketch para ESP32 a cada push e pull request, garantindo que o
+# código no repositório sempre compila com as bibliotecas de libraries.txt.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  esp32:
+    name: ESP32 DevKit C
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar o arduino-cli
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Instalar o core ESP32 e as bibliotecas
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+          # Lê as bibliotecas de libraries.txt (ignora comentários e linhas vazias)
+          grep -v '^\s*#' simulacao/wokwi/libraries.txt | sed '/^\s*$/d' | while read -r lib; do
+            arduino-cli lib install "$lib"
+          done
+
+      - name: Compilar
+        # O arduino-cli exige que a pasta tenha o mesmo nome do .ino
+        run: |
+          mkdir -p "$RUNNER_TEMP/sketch"
+          cp simulacao/wokwi/sketch.ino "$RUNNER_TEMP/sketch/"
+          arduino-cli compile --fqbn esp32:esp32:esp32 --warnings default "$RUNNER_TEMP/sketch"

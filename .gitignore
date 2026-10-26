@@ -1,0 +1,18 @@
+# Saída de compilação (arduino-cli / Arduino IDE / PlatformIO)
+build/
+*.bin
+*.elf
+*.map
+.pio/
+
+# Editores e sistema
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Documentos temporários do Office
+~$*
