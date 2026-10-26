@@ -25,13 +25,16 @@ Adafruit_SSD1306 display(OLED_W, OLED_H, &Wire, -1);
 // ---------- DHT22 ----------
 DHT dht(DHT_PIN, DHT22);
 
-// ---------- Limiares (ajuste conforme o referencial teórico) ----------
-const float CO2_ATENCAO  = 800;   // ppm
-const float CO2_ALERTA   = 1000;  // ppm
-const float DUST_ATENCAO = 15;    // ug/m3
-const float DUST_ALERTA  = 35;    // ug/m3
-const float TEMP_MIN = 20, TEMP_MAX = 26;   // °C (conforto)
-const float UMID_MIN = 40, UMID_MAX = 60;   // % (conforto)
+// ---------- Limiares ----------
+// Referência: ANVISA, Resolução RE nº 9/2003 (qualidade do ar interior em
+// ambientes climatizados de uso coletivo), conforme a seção 2.4 do roteiro.
+// "ALERTA" = limite da norma; "ATENCAO" = pré-alerta em 80% do limite.
+const float CO2_ATENCAO  = 800;   // ppm   (80% do limite)
+const float CO2_ALERTA   = 1000;  // ppm   (RE 9/2003: <= 1000 ppm)
+const float DUST_ATENCAO = 64;    // ug/m3 (80% do limite)
+const float DUST_ALERTA  = 80;    // ug/m3 (RE 9/2003: aerodispersóides <= 80 ug/m3)
+const float TEMP_MIN = 23, TEMP_MAX = 26;   // °C (RE 9/2003, condições de verão)
+const float UMID_MIN = 40, UMID_MAX = 65;   // %  (RE 9/2003, condições de verão)
 
 // Faixas simuladas dos potenciômetros
 float lerCO2()   { return map(analogRead(POT_CO2),   0, 4095, 400, 2000); }
@@ -39,6 +42,8 @@ float lerPoeira(){ return analogRead(POT_DUST)  * 150.0 / 4095.0; }          // 
 float lerPressao(){ return 950.0 + analogRead(POT_PRESS) * 100.0 / 4095.0; } // 950-1050 hPa
 
 // 0 = OK, 1 = atenção, 2 = alerta
+// Se o DHT22 falhar, t/u chegam como NaN: toda comparação com NaN é falsa,
+// então temperatura e umidade simplesmente não entram na classificação.
 int classificar(float co2, float poeira, float t, float u) {
   int nivel = 0;
   if (co2 > CO2_ALERTA || poeira > DUST_ALERTA) nivel = 2;
@@ -81,7 +86,10 @@ void setup() {
 void loop() {
   float t = dht.readTemperature();
   float u = dht.readHumidity();
-  if (isnan(t) || isnan(u)) { t = 0; u = 0; }
+  // Antes, uma falha de leitura virava t = 0 / u = 0, o que disparava
+  // "ATENCAO" falso. Agora o NaN é mantido e sinalizado como erro de sensor.
+  bool dhtOk = !(isnan(t) || isnan(u));
+  if (!dhtOk) Serial.println("Falha na leitura do DHT22");
 
   float co2    = lerCO2();
   float poeira = lerPoeira();
@@ -99,8 +107,10 @@ void loop() {
   display.setCursor(0, 0);
   display.printf("AirSense  [%s]\n", status[nivel]);
   display.drawLine(0, 9, 127, 9, SSD1306_WHITE);
-  display.setCursor(0, 14); display.printf("Temp: %.1f C\n", t);
-  display.setCursor(0, 24); display.printf("Umid: %.0f %%\n", u);
+  display.setCursor(0, 14);
+  if (dhtOk) display.printf("Temp: %.1f C\n", t); else display.print("Temp: -- (erro)");
+  display.setCursor(0, 24);
+  if (dhtOk) display.printf("Umid: %.0f %%\n", u); else display.print("Umid: -- (erro)");
   display.setCursor(0, 34); display.printf("CO2 : %.0f ppm\n", co2);
   display.setCursor(0, 44); display.printf("Poeira: %.0f ug/m3\n", poeira);
   display.setCursor(0, 54); display.printf("Press: %.0f hPa\n", pressao);
