@@ -4,13 +4,19 @@
 
 **Sistema de monitoramento da qualidade do ar e das condições climáticas para ambientes internos**
 
-[![Compilar firmware](https://github.com/DaviFCSilva/air-sense/actions/workflows/compilar.yml/badge.svg)](https://github.com/DaviFCSilva/air-sense/actions/workflows/compilar.yml)
+[![CI](https://github.com/DaviFCSilva/air-sense/actions/workflows/ci.yml/badge.svg)](https://github.com/DaviFCSilva/air-sense/actions/workflows/ci.yml)
 ![ESP32](https://img.shields.io/badge/ESP32-DevKit%20C-E7352C?logo=espressif&logoColor=white)
 ![Arduino](https://img.shields.io/badge/C%2FC%2B%2B-Arduino-00878F?logo=arduino&logoColor=white)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Wokwi](https://img.shields.io/badge/simula%C3%A7%C3%A3o-Wokwi-6A3EA1)
 ![Status](https://img.shields.io/badge/status-em%20desenvolvimento-yellow)
 
 Projeto extensionista de Microcontroladores · Estácio Ribeirânia · Ribeirão Preto/SP · 2026
+
+**[📋 Resumo do projeto](docs/resumo-do-projeto.md)** ·
+**[▶️ Como rodar](docs/como-rodar.md)** ·
+**[🧩 Arquitetura](docs/arquitetura.md)** ·
+**[🔌 API](api/README.md)**
 
 </div>
 
@@ -20,10 +26,10 @@ Projeto extensionista de Microcontroladores · Estácio Ribeirânia · Ribeirão
 
 - [Sobre o projeto](#sobre-o-projeto)
 - [Funcionalidades](#funcionalidades)
+- [Início rápido](#início-rápido)
 - [Arquitetura](#arquitetura)
 - [Hardware](#hardware)
 - [Como funciona a classificação](#como-funciona-a-classificação)
-- [Como simular](#como-simular)
 - [Estrutura do repositório](#estrutura-do-repositório)
 - [Roadmap](#roadmap)
 - [Equipe](#equipe)
@@ -41,12 +47,13 @@ Estudos de Harvard (Allen et al., 2016) mostram que, em ambientes bem
 ventilados e com pouco CO2, o desempenho cognitivo dos trabalhadores foi
 **101 % maior** do que nas condições convencionais. Mesmo assim, as soluções
 comerciais de monitoramento contínuo costumam ser caras demais para a maioria
-das empresas e dos coworkings.
+das empresas.
 
 O **AirSense** é um dispositivo de baixo custo baseado em **ESP32** que mede
-continuamente o ar do ambiente, mostra os valores em um display e avisa com
+continuamente o ar do ambiente, mostra os valores em um display, avisa com
 LEDs e alarme sonoro quando as condições saem dos limites da
-**Resolução ANVISA RE nº 9/2003**.
+**Resolução ANVISA RE nº 9/2003** e envia as leituras para um **painel web**
+com histórico.
 
 > Projeto desenvolvido para a disciplina de Microcontroladores, na modalidade
 > extensionista, em parceria com um escritório corporativo, sob orientação do
@@ -56,10 +63,34 @@ LEDs e alarme sonoro quando as condições saem dos limites da
 
 - 📊 Medição de **CO2, material particulado, temperatura, umidade e pressão**
 - 🖥️ Exibição em tempo real em um **display OLED 128×64**
-- 🚦 Indicação de status por **LEDs**: verde (OK), amarelo (ATENÇÃO) e vermelho (ALERTA)
-- 🔔 **Alarme sonoro** quando algum limite da norma é ultrapassado
-- 📝 **Log no monitor serial** a cada segundo, para análise dos dados
+- 🚦 **LEDs de status**: verde (OK), amarelo (ATENÇÃO) e vermelho (ALERTA)
+- 🔔 **Alarme sonoro por PWM** quando um limite da norma é ultrapassado
+- 📡 **Envio das leituras por Wi-Fi** para a API a cada 5 segundos
+- 📈 **Painel web** com status, gráficos com os limites da ANVISA e histórico
 - ⚠️ Detecção de **falha no sensor** DHT22, sem gerar alerta falso
+- 🔒 Credenciais fora do código (`secrets.h` e `.env`, nenhum dos dois vai para o Git)
+
+![Painel do AirSense](docs/img/painel.png)
+<sub>Painel com dados gerados pelo <code>api/enviar_teste.py</code>.</sub>
+
+## Início rápido
+
+**Só a simulação (5 minutos, sem instalar nada):** abra
+[wokwi.com/projects/new/esp32](https://wokwi.com/projects/new/esp32), cole os
+arquivos de [`firmware/airsense/`](firmware/airsense/) e clique em ▶️.
+
+**API e painel:**
+
+```bash
+cd api
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                                # e troque a API_KEY
+uvicorn main:app --reload --port 8000               # painel em http://localhost:8000
+```
+
+Para ligar o Wokwi à API (túnel, `secrets.h` etc.), siga o
+**[guia passo a passo](docs/como-rodar.md)**.
 
 ## Arquitetura
 
@@ -74,11 +105,16 @@ flowchart LR
 
     MCU[ESP32<br/>DevKit C]
 
-    subgraph Saidas[Saídas]
+    subgraph Local
         OLED[OLED SSD1306]
         LEDS[LEDs de status]
         BZ[Buzzer]
-        SER[Monitor serial]
+    end
+
+    subgraph Nuvem[Servidor]
+        API[API FastAPI]
+        DB[(SQLite)]
+        PAINEL[Painel web]
     end
 
     DHT -->|1 fio| MCU
@@ -87,15 +123,17 @@ flowchart LR
     BMP -->|ADC*| MCU
     MCU -->|I2C| OLED
     MCU -->|GPIO| LEDS
-    MCU -->|GPIO| BZ
-    MCU -->|UART| SER
+    MCU -->|PWM| BZ
+    MCU -->|Wi-Fi · HTTPS| API
+    API --> DB
+    API --> PAINEL
 ```
 
 <sub>\* Na simulação, CO2 e pressão são potenciômetros no ADC. No hardware real, o SCD40 e o BMP280 passam para o barramento I2C.</sub>
 
-O detalhamento completo, com a justificativa da escolha do microcontrolador,
-os periféricos internos, o fluxograma do firmware e as rotinas principais, está
-em **[docs/arquitetura.md](docs/arquitetura.md)**.
+Detalhes em **[docs/arquitetura.md](docs/arquitetura.md)**: escolha do
+microcontrolador, periféricos internos, organização do firmware, fluxograma e
+rotinas. O porquê de cada escolha está em **[docs/decisoes.md](docs/decisoes.md)**.
 
 ## Hardware
 
@@ -108,7 +146,7 @@ em **[docs/arquitetura.md](docs/arquitetura.md)**.
 | GP2Y1010AU0F | Poeira | Analógica | 35 | 🎛️ Potenciômetro (0–150 µg/m³) |
 | BMP280 | Pressão | I2C | 32 | 🎛️ Potenciômetro (950–1050 hPa) |
 | LED verde / amarelo / vermelho + 220 Ω | Status | GPIO | 25 / 26 / 27 | ✅ Real |
-| Buzzer | Alarme | GPIO | 33 | ✅ Real |
+| Buzzer | Alarme | PWM (LEDC) | 33 | ✅ Real |
 
 Especificações e componentes de apoio: **[docs/lista-de-materiais.md](docs/lista-de-materiais.md)**.
 
@@ -126,92 +164,70 @@ ATENÇÃO funciona como pré-alerta, em 80 % do limite.
 | Temperatura | 23–26 °C | fora da faixa | — |
 | Umidade relativa | 40–65 % | fora da faixa | — |
 
-No nível **ALERTA**, o buzzer também apita. Os limites ficam no começo do
-[`sketch.ino`](simulacao/wokwi/sketch.ino) e podem ser ajustados facilmente.
+No nível **ALERTA**, o buzzer também apita. Os limites ficam em
+[`config.h`](firmware/airsense/config.h).
 
 <details>
 <summary><b>Formato da saída no monitor serial</b></summary>
 
 ```
-T=24.5C U=55% CO2=650ppm PM=20ug/m3 P=1013hPa nivel=0
-T=24.6C U=55% CO2=870ppm PM=22ug/m3 P=1013hPa nivel=1
-T=24.6C U=56% CO2=1150ppm PM=25ug/m3 P=1012hPa nivel=2
+Conectando ao Wi-Fi "Wokwi-GUEST"......
+Wi-Fi conectado! IP: 10.10.0.2
+T=24.5C U=55% CO2=650ppm PM=20ug/m3 P=1013hPa nivel=0 (OK)
+T=24.6C U=55% CO2=870ppm PM=22ug/m3 P=1013hPa nivel=1 (ATENCAO)
+POST https://....trycloudflare.com/leituras -> 201
+T=24.6C U=56% CO2=1150ppm PM=25ug/m3 P=1012hPa nivel=2 (ALERTA)
 ```
 
-<sub>Valores ilustrativos. `nivel`: 0 = OK, 1 = ATENÇÃO, 2 = ALERTA.</sub>
+<sub>Valores ilustrativos.</sub>
 </details>
-
-## Como simular
-
-### No navegador (Wokwi)
-
-1. Abra **[wokwi.com/projects/new/esp32](https://wokwi.com/projects/new/esp32)**.
-2. Substitua o conteúdo da aba `sketch.ino` pelo de [`simulacao/wokwi/sketch.ino`](simulacao/wokwi/sketch.ino).
-3. Substitua o conteúdo da aba `diagram.json` pelo de [`simulacao/wokwi/diagram.json`](simulacao/wokwi/diagram.json).
-4. Crie um arquivo `libraries.txt` (botão ▾ ao lado das abas → *New file…*) e cole o conteúdo de [`simulacao/wokwi/libraries.txt`](simulacao/wokwi/libraries.txt).
-5. Clique em ▶️ **Start the simulation**.
-
-**Para testar:** gire os potenciômetros para mudar CO2, poeira e pressão. Para
-mudar temperatura e umidade, clique no DHT22 durante a simulação. Os LEDs e o
-display respondem na hora.
-
-### No VS Code (opcional)
-
-Com a extensão [Wokwi Simulator](https://marketplace.visualstudio.com/items?itemName=wokwi.wokwi-vscode)
-e o [arduino-cli](https://arduino.github.io/arduino-cli/) instalados:
-
-```bash
-# Uma vez só: core do ESP32 e bibliotecas
-arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-arduino-cli core update-index
-arduino-cli core install esp32:esp32
-arduino-cli lib install "Adafruit GFX Library" "Adafruit SSD1306" "DHT sensor library"
-
-# Compila e gera o firmware em simulacao/wokwi/build/
-cd simulacao/wokwi
-arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir build .
-```
-
-Depois, abra o `diagram.json` no VS Code e rode **Wokwi: Start Simulator**
-(F1). O arquivo [`wokwi.toml`](simulacao/wokwi/wokwi.toml) já aponta para o
-firmware compilado.
-
-> Se o `arduino-cli` reclamar do nome da pasta, copie o `sketch.ino` para uma
-> pasta chamada `sketch/` e compile a partir dela.
 
 ## Estrutura do repositório
 
 ```
 air-sense/
-├── .github/workflows/
-│   └── compilar.yml        # CI: compila o firmware para ESP32 a cada push
+├── firmware/airsense/       # firmware do ESP32 + arquivos do Wokwi
+│   ├── airsense.ino         #   setup, loop, display e serial
+│   ├── config.h             #   pinos, limiares, tempos e rede
+│   ├── sensores.h           #   leitura dos sensores
+│   ├── alertas.h            #   classificação, LEDs e buzzer (PWM)
+│   ├── rede.h               #   Wi-Fi e envio para a API
+│   ├── secrets.example.h    #   modelo de credenciais (copiar para secrets.h)
+│   ├── diagram.json         #   circuito do Wokwi
+│   ├── libraries.txt        #   bibliotecas
+│   └── wokwi.toml           #   Wokwi no VS Code
+├── api/                     # API (FastAPI + SQLite) e painel web
+│   ├── main.py
+│   ├── static/index.html    #   painel
+│   ├── enviar_teste.py      #   gera leituras falsas para testar
+│   └── tests/               #   testes automatizados
 ├── docs/
-│   ├── arquitetura.md      # MCU, pinagem, periféricos, fluxograma e rotinas
+│   ├── resumo-do-projeto.md # visão geral, situação e tarefas de cada integrante
+│   ├── como-rodar.md        # passo a passo completo
+│   ├── arquitetura.md       # detalhamento técnico (base do roteiro 2.6)
+│   ├── decisoes.md          # por que o projeto é como é
 │   └── lista-de-materiais.md
-├── firmware/
-│   └── README.md           # versão para o hardware físico (planejada)
-├── simulacao/wokwi/
-│   ├── sketch.ino          # firmware em C/C++ (Arduino)
-│   ├── diagram.json        # circuito do Wokwi
-│   ├── libraries.txt       # bibliotecas usadas
-│   └── wokwi.toml          # configuração para o VS Code
-└── README.md
+└── .github/workflows/ci.yml # compila o firmware e testa a API a cada push
 ```
 
 ## Roadmap
 
 - [x] Definição do problema e do público (Diagnóstico e Teorização)
 - [x] Planejamento: cronograma, metas, indicadores e recursos
-- [x] Simulação no Wokwi com leitura dos sensores, display, LEDs e alarme
+- [x] Contato com o escritório parceiro
+- [x] Simulação no Wokwi com sensores, display, LEDs e alarme
 - [x] Limiares alinhados à ANVISA RE nº 9/2003
-- [x] Compilação automática no GitHub Actions
-- [ ] Validação da proposta técnica com o escritório parceiro
-- [ ] Buzzer por PWM (LEDC) e leituras por interrupção de timer
+- [x] Firmware modular, sem `delay()`, com buzzer por PWM
+- [x] Envio dos dados por Wi-Fi, API e painel web
+- [x] CI: compilação do firmware e testes da API
+- [ ] Registro da validação da proposta técnica com o escritório
+- [ ] Interrupções: timer de leitura e botão para silenciar o alarme
 - [ ] Firmware com os sensores reais (SCD40, GP2Y1010, BMP280)
 - [ ] Montagem física em protoboard e calibração
-- [ ] Envio dos dados por Wi-Fi para um dashboard
 - [ ] Testes de integração e de estabilidade (8 h contínuas)
 - [ ] Apresentação ao escritório parceiro e avaliação de reação
+
+O que cada integrante está fazendo: **[docs/resumo-do-projeto.md](docs/resumo-do-projeto.md)**.
 
 ## Equipe
 
@@ -219,9 +235,9 @@ air-sense/
 
 | Integrante | Papel |
 |---|---|
-| **Davi** | Documentação, Roteiro de Extensão e contato com o escritório parceiro |
-| **Gabriel** | Arquitetura de hardware, montagem dos circuitos e calibração dos sensores |
-| **Pedro Borges** | Testes de validação, exibição e análise dos dados |
+| **Davi** | Documentação, Roteiro de Extensão, repositório e contato com o escritório parceiro |
+| **Gabriel** | Arquitetura de hardware, circuito, montagem e calibração dos sensores |
+| **Pedro Borges** | Testes de validação, exibição e análise dos dados (API e painel) |
 | **Vinicius Barbosa** | Firmware em C, integração dos sensores e rotinas de alerta |
 
 ## Referências
@@ -231,7 +247,7 @@ air-sense/
 - GBC BRASIL. **Qualidade do ar interno e rendimento no trabalho**. Disponível em: <https://www.gbcbrasil.org.br/qualidade-do-ar-interno-e-rendimento-no-trabalho/>.
 - GBC BRASIL. **Síndrome do Edifício Doente: o que é, causas e como prevenir**. Disponível em: <https://www.gbcbrasil.org.br/sindrome-do-edificio-doente-o-que-e-causas-e-como-prevenir/>.
 - ESPRESSIF. **ESP32 Technical Reference Manual**. Disponível em: <https://www.espressif.com/en/support/documents/technical-documents>.
-- WOKWI. **Documentação do simulador**. Disponível em: <https://docs.wokwi.com/>.
+- WOKWI. **ESP32 WiFi Networking**. Disponível em: <https://docs.wokwi.com/guides/esp32-wifi>.
 
 ---
 

@@ -1,18 +1,34 @@
 # Arquitetura do sistema embarcado
 
-Este documento detalha as decisões técnicas do AirSense e serve de base para a
-seção **2.6 – Detalhamento técnico do projeto** do Roteiro de Extensão.
+Este documento detalha como o AirSense foi construído e serve de base para a
+seção **2.6 – Detalhamento técnico do projeto** do Roteiro de Extensão. O
+porquê de cada escolha está em [decisoes.md](decisoes.md).
 
 ## Sumário
 
+- [Visão geral](#visão-geral)
 - [Escolha do microcontrolador](#escolha-do-microcontrolador)
 - [Diagrama de blocos](#diagrama-de-blocos)
 - [Pinagem](#pinagem)
 - [Periféricos internos utilizados](#periféricos-internos-utilizados)
-- [Periféricos externos](#periféricos-externos)
+- [Organização do firmware](#organização-do-firmware)
 - [Fluxo do firmware](#fluxo-do-firmware)
 - [Rotinas e variáveis principais](#rotinas-e-variáveis-principais)
-- [Melhorias planejadas](#melhorias-planejadas)
+- [Comunicação com a API](#comunicação-com-a-api)
+- [Próximos passos técnicos](#próximos-passos-técnicos)
+
+## Visão geral
+
+```mermaid
+flowchart LR
+    subgraph Dispositivo
+        S[Sensores] --> E[ESP32]
+        E --> L[OLED, LEDs, buzzer]
+    end
+    E -->|Wi-Fi · HTTPS POST a cada 5 s| A[API FastAPI]
+    A --> D[(SQLite)]
+    A --> P[Painel web]
+```
 
 ## Escolha do microcontrolador
 
@@ -20,12 +36,13 @@ Placa escolhida: **ESP32 DevKit C V4** (SoC ESP32-WROOM-32).
 
 | Critério | Por que o ESP32 atende |
 |---|---|
-| Processamento | Dual-core Xtensa LX6 de até 240 MHz, com folga para ler sensores, atualizar o display e, futuramente, transmitir dados |
-| Conectividade | Wi-Fi e Bluetooth integrados, o que viabiliza o envio dos dados para um dashboard remoto sem módulos extras |
-| Conversão analógica | ADC de 12 bits (0–4095) com vários canais, suficiente para sensores analógicos como o GP2Y1010 |
+| Processamento | Dual-core Xtensa LX6 de até 240 MHz, com folga para sensores, display e HTTPS |
+| Conectividade | Wi-Fi e Bluetooth integrados: envia os dados para a API sem módulos extras |
+| Conversão analógica | ADC de 12 bits (0–4095) com vários canais |
 | Barramentos | I2C, SPI e UART por hardware, compatíveis com o SCD40, o BMP280 e o OLED |
-| Custo e tamanho | Placa compacta e barata, amplamente disponível no Brasil |
-| Simulação | Suporte nativo no Wokwi, permitindo desenvolver e testar sem hardware físico |
+| PWM | Periférico LEDC com até 16 canais, usado no buzzer |
+| Custo e tamanho | Placa compacta e barata, fácil de encontrar no Brasil |
+| Simulação | Suporte nativo no Wokwi, inclusive Wi-Fi |
 
 ## Diagrama de blocos
 
@@ -41,9 +58,11 @@ flowchart LR
     subgraph MCU[ESP32 DevKit C]
         GPIO[GPIO digital]
         ADC[ADC1 12 bits]
-        I2C[I2C]
-        UART[UART0]
         LOGIC[Classificação<br/>OK / ATENÇÃO / ALERTA]
+        I2C[I2C]
+        LEDC[LEDC / PWM]
+        UART[UART0]
+        WIFI[Wi-Fi]
     end
 
     subgraph Saidas[Saídas]
@@ -51,9 +70,10 @@ flowchart LR
         LEDS[LEDs verde,<br/>amarelo e vermelho]
         BZ[Buzzer]
         SER[Monitor serial]
+        API[API / painel]
     end
 
-    DHT -->|barramento de 1 fio, GPIO 15| GPIO
+    DHT -->|1 fio, GPIO 15| GPIO
     CO2 -->|simulado: pot. no GPIO 34| ADC
     PM -->|simulado: pot. no GPIO 35| ADC
     BMP -->|simulado: pot. no GPIO 32| ADC
@@ -61,14 +81,14 @@ flowchart LR
     ADC --> LOGIC
     LOGIC --> I2C -->|SDA 21 / SCL 22| OLED
     LOGIC -->|GPIO 25, 26, 27| LEDS
-    LOGIC -->|GPIO 33| BZ
+    LOGIC --> LEDC -->|GPIO 33, 2 kHz| BZ
     LOGIC --> UART -->|115200 baud| SER
+    LOGIC --> WIFI -->|HTTPS| API
 ```
 
-> Na simulação, os sensores de CO2, poeira e pressão são representados por
-> potenciômetros ligados ao ADC. Na versão física, o SCD40 e o BMP280 passam
-> para o barramento I2C e o GP2Y1010 continua no ADC (veja
-> [Melhorias planejadas](#melhorias-planejadas)).
+> Na simulação, os sensores de CO2, poeira e pressão são potenciômetros ligados
+> ao ADC. Na versão física, o SCD40 e o BMP280 passam para o barramento I2C, e o
+> GP2Y1010 continua no ADC.
 
 ## Pinagem
 
@@ -80,92 +100,126 @@ flowchart LR
 | 34 | Entrada analógica (ADC1_CH6) | Potenciômetro de CO2 | Pino somente de entrada |
 | 35 | Entrada analógica (ADC1_CH7) | Potenciômetro de poeira | Pino somente de entrada |
 | 32 | Entrada analógica (ADC1_CH4) | Potenciômetro de pressão | |
-| 25 | Saída digital | LED verde (resistor de 220 Ω) | Status OK |
-| 26 | Saída digital | LED amarelo (resistor de 220 Ω) | Status ATENÇÃO |
-| 27 | Saída digital | LED vermelho (resistor de 220 Ω) | Status ALERTA |
-| 33 | Saída digital | Buzzer | Onda quadrada de ~2 kHz |
+| 25 | Saída digital | LED verde (220 Ω) | Status OK |
+| 26 | Saída digital | LED amarelo (220 Ω) | Status ATENÇÃO |
+| 27 | Saída digital | LED vermelho (220 Ω) | Status ALERTA |
+| 33 | Saída PWM (LEDC) | Buzzer | Tom de 2 kHz por 100 ms |
 | 1 / 3 | UART0 TX/RX | Monitor serial | 115200 baud |
 
-**Por que só ADC1?** O ADC2 do ESP32 fica indisponível quando o Wi-Fi está
-ativo. Como a transmissão dos dados por Wi-Fi está nos planos, todos os canais
-analógicos foram colocados no ADC1 desde já.
+Todos os pinos estão definidos em [`config.h`](../firmware/airsense/config.h).
+Os sinais analógicos ficam só no ADC1, porque o ADC2 não funciona com o Wi-Fi
+ligado.
 
 ## Periféricos internos utilizados
 
-| Periférico | Uso no AirSense |
+| Periférico | Uso no AirSense | Onde no código |
+|---|---|---|
+| **GPIO digital (saída)** | LEDs de status | `alertas.h` → `sinalizar()` |
+| **GPIO digital (entrada/saída)** | Comunicação com o DHT22 | `sensores.h` (biblioteca DHT) |
+| **ADC** | Leitura de 12 bits dos sinais de CO2, poeira e pressão | `sensores.h` → `lerCO2()`, `lerPoeira()`, `lerPressao()` |
+| **PWM (LEDC)** | Tom do buzzer gerado em hardware | `alertas.h` → `iniciarAlertas()`, `bipar()` |
+| **I2C** | Display OLED | `airsense.ino` → `mostrarNaTela()` |
+| **UART** | Log no monitor serial | `airsense.ino` → `registrarNoSerial()` |
+| **Temporizador do sistema** | `millis()` agenda leitura (1 s), bipe (100 ms) e envio (5 s) sem `delay()` | `airsense.ino` → `loop()` |
+| **Wi-Fi** | Envio das leituras para a API | `rede.h` |
+
+**Ainda não usados:** interrupções e timers por hardware. Veja os
+[próximos passos](#próximos-passos-técnicos).
+
+## Organização do firmware
+
+```
+firmware/airsense/
+├── airsense.ino         setup(), loop(), display e serial
+├── config.h             pinos, limiares, tempos, rede, MODO_SIMULACAO
+├── sensores.h           struct Leitura e leitura dos sensores
+├── alertas.h            classificação, LEDs e buzzer (PWM)
+├── rede.h               Wi-Fi e POST para a API
+├── secrets.example.h    modelo das credenciais (copiar para secrets.h)
+├── diagram.json         circuito do Wokwi
+├── libraries.txt        bibliotecas usadas
+└── wokwi.toml           configuração do Wokwi para VS Code
+```
+
+Os módulos são arquivos `.h` incluídos pelo `airsense.ino`, então a compilação
+é a mesma do Arduino IDE, do arduino-cli e do Wokwi.
+
+| Configuração em `config.h` | Efeito |
 |---|---|
-| **GPIO digital (saída)** | Acionamento dos três LEDs de status e do buzzer |
-| **GPIO digital (entrada/saída)** | Comunicação com o DHT22 |
-| **ADC** | Leitura de 12 bits (`analogReadResolution(12)`) dos sinais analógicos de CO2, poeira e pressão |
-| **I2C** | Comunicação com o display OLED (biblioteca `Wire`) |
-| **UART** | Log das leituras no monitor serial (`Serial.printf`) |
-| **Temporizadores** | Base de tempo do ciclo de 1 s (`delay`) e geração da onda do buzzer (`delayMicroseconds`) |
-
-## Periféricos externos
-
-A lista completa, com especificações e equivalência entre simulação e
-hardware real, está em [lista-de-materiais.md](lista-de-materiais.md).
+| `MODO_SIMULACAO 1` | Lê potenciômetros no lugar dos sensores reais; Wi-Fi no canal 6 (mais rápido no Wokwi) |
+| `MODO_SIMULACAO 0` | Sensores reais (ainda não implementados: a compilação para com uma mensagem explicando isso) |
+| Sem `secrets.h` | Funciona completo, mas sem Wi-Fi e sem envio |
+| Com `secrets.h` | Conecta ao Wi-Fi e envia para `API_URL` |
 
 ## Fluxo do firmware
 
 ```mermaid
 flowchart TD
-    A([Liga]) --> B[setup: configura pinos, ADC 12 bits,<br/>DHT22, I2C e OLED]
+    A([Liga]) --> B[setup: LEDs, PWM do buzzer,<br/>ADC, DHT22, I2C e OLED]
     B --> C{OLED respondeu?}
-    C -- não --> D[Mostra erro no serial<br/>e trava]
-    C -- sim --> E[Tela de boas-vindas]
-    E --> F[Lê DHT22]
-    F --> G[Lê CO2, poeira e pressão]
-    G --> H[classificar]
-    H --> I{Nível}
-    I -- 0 OK --> J[LED verde]
-    I -- 1 ATENÇÃO --> K[LED amarelo]
-    I -- 2 ALERTA --> L[LED vermelho + bipe]
-    J --> M[Atualiza OLED e serial]
-    K --> M
-    L --> M
-    M --> N[Espera 1 s]
-    N --> F
+    C -- não --> D[Erro no serial e trava]
+    C -- sim --> W{API configurada?}
+    W -- sim --> WF[Conecta ao Wi-Fi<br/>por até 15 s]
+    W -- não --> LP
+    WF --> LP
+
+    LP{{loop}} --> T1{Passou 1 s?}
+    T1 -- sim --> R[Lê sensores → classifica →<br/>LEDs/bipe → OLED → serial]
+    T1 -- não --> T2
+    R --> T2[Encerra o bipe se<br/>passou 100 ms]
+    T2 --> T3{Passaram 5 s<br/>e sem bipe tocando?}
+    T3 -- sim --> P[POST da leitura na API]
+    T3 -- não --> LP
+    P --> LP
 ```
 
 ## Rotinas e variáveis principais
 
-| Elemento | Tipo | Função |
+| Elemento | Arquivo | Função |
 |---|---|---|
-| `CO2_ATENCAO`, `CO2_ALERTA` | `const float` | Limiares de CO2 em ppm |
-| `DUST_ATENCAO`, `DUST_ALERTA` | `const float` | Limiares de poeira em µg/m³ |
-| `TEMP_MIN`, `TEMP_MAX` | `const float` | Faixa de temperatura aceitável em °C |
-| `UMID_MIN`, `UMID_MAX` | `const float` | Faixa de umidade relativa aceitável em % |
-| `lerCO2()` | função | Converte a leitura do ADC (0–4095) para 400–2000 ppm |
-| `lerPoeira()` | função | Converte a leitura do ADC para 0–150 µg/m³ |
-| `lerPressao()` | função | Converte a leitura do ADC para 950–1050 hPa |
-| `classificar()` | função | Retorna `0` (OK), `1` (ATENÇÃO) ou `2` (ALERTA) |
-| `apitar()` | função | Gera ~100 ms de onda quadrada de ~2 kHz no buzzer |
-| `dhtOk` | `bool` | Indica se a leitura do DHT22 foi válida no ciclo atual |
+| `struct Leitura` | `sensores.h` | Agrupa temperatura, umidade, CO2, poeira, pressão e `dhtOk` |
+| `lerSensores()` | `sensores.h` | Faz uma leitura completa; mantém `NaN` e marca `dhtOk = false` se o DHT22 falhar |
+| `lerCO2()`, `lerPoeira()`, `lerPressao()` | `sensores.h` | Convertem o ADC (0–4095) para 400–2000 ppm, 0–150 µg/m³ e 950–1050 hPa |
+| `enum Nivel` | `alertas.h` | `NIVEL_OK`, `NIVEL_ATENCAO`, `NIVEL_ALERTA` |
+| `classificar()` | `alertas.h` | Aplica os limites da ANVISA e devolve o nível |
+| `sinalizar()` | `alertas.h` | Acende o LED do nível e, em ALERTA, chama `bipar()` |
+| `bipar()` / `atualizarBuzzer()` | `alertas.h` | Liga o tom no LEDC e o desliga após `DURACAO_BIPE_MS`, sem bloquear |
+| `conectarWiFi()` | `rede.h` | Conecta por até `TIMEOUT_WIFI_MS` |
+| `montarJson()` | `rede.h` | Monta o JSON da leitura; usa `null` quando o DHT22 falha |
+| `enviarParaAPI()` | `rede.h` | Faz o POST com `x-api-key`; sem Wi-Fi, tenta reconectar no máximo a cada 30 s |
+| `mostrarNaTela()` | `airsense.ino` | Desenha 6 linhas no OLED; `W` no canto indica Wi-Fi conectado |
+| `ultimaLeitura`, `ultimoEnvio` | `airsense.ino` | Marcam, em `millis()`, quando cada tarefa rodou pela última vez |
 
 ### Regras de classificação
 
 1. **ALERTA** se CO2 > 1000 ppm **ou** poeira > 80 µg/m³.
 2. Senão, **ATENÇÃO** se CO2 > 800 ppm **ou** poeira > 64 µg/m³.
-3. Se ainda estiver em **OK**, passa para **ATENÇÃO** quando a temperatura sai
-   de 23–26 °C ou a umidade sai de 40–65 %.
-4. Se o DHT22 falhar, temperatura e umidade ficam de fora da classificação
-   e o display mostra `-- (erro)`.
+3. Senão, **ATENÇÃO** se a temperatura sai de 23–26 °C ou a umidade sai de 40–65 %.
+4. Se o DHT22 falhar, temperatura e umidade ficam de fora da regra 3.
 
-## Melhorias planejadas
+## Comunicação com a API
 
-Estes pontos cobrem habilidades pedidas na disciplina que ainda não aparecem
-no código:
+A cada 5 s, o `rede.h` envia:
 
-- **PWM:** gerar o tom do buzzer com o periférico LEDC (`ledcWriteTone`) em vez
-  de alternar o pino manualmente, liberando a CPU durante o bipe.
-- **Interrupções e temporizadores por hardware:** usar um timer para disparar
-  as leituras a cada 1 s e um botão com interrupção para silenciar o alarme.
-- **Sensores reais no I2C:** SCD40 (`0x62`) e BMP280 (`0x76`/`0x77`)
-  compartilhando o barramento com o OLED.
-- **GP2Y1010 físico:** o LED infravermelho interno precisa de um pulso de
-  0,32 ms a cada 10 ms, com a leitura feita ~0,28 ms após o início do pulso. A
-  saída analógica pode passar de 3,3 V, então é preciso um divisor de tensão
-  antes do ADC do ESP32.
-- **Envio dos dados por Wi-Fi** para um dashboard, permitindo a análise
-  histórica prevista nas metas do projeto.
+```http
+POST /leituras HTTP/1.1
+Content-Type: application/json
+x-api-key: <API_KEY do secrets.h>
+
+{"device":"airsense-01","temperatura":24.5,"umidade":55.0,"co2":650,"poeira":20.0,"pressao":1013.0,"nivel":0}
+```
+
+A API responde `201` quando grava. O contrato completo, com faixas aceitas e
+códigos de erro, está em [api/README.md](../api/README.md).
+
+## Próximos passos técnicos
+
+- **Interrupções e timers por hardware** (cobrados na disciplina): timer para
+  disparar a leitura a cada 1 s e botão com interrupção para silenciar o alarme.
+- **Sensores reais** no bloco `MODO_SIMULACAO 0` do `sensores.h`: SCD40 (`0x62`)
+  e BMP280 (`0x76`/`0x77`) no mesmo barramento I2C do OLED.
+- **GP2Y1010 físico:** o LED infravermelho interno precisa de um pulso de 0,32 ms
+  a cada 10 ms, com a leitura ~0,28 ms após o início do pulso. A saída pode
+  passar de 3,3 V, então é preciso um divisor de tensão antes do ADC.
+- **HTTPS com certificado validado** (`setCACert`) se o dispositivo for
+  instalado de verdade.

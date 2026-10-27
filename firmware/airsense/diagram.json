@@ -16,7 +16,7 @@
       "id": "dht",
       "top": -120,
       "left": -110,
-      "attrs": { "temperature": "12.9", "humidity": "22.5" }
+      "attrs": { "temperature": "24.5", "humidity": "55" }
     },
     { "type": "wokwi-potentiometer", "id": "pot_co2", "top": 30, "left": 170, "attrs": {} },
     { "type": "wokwi-potentiometer", "id": "pot_dust", "top": 120, "left": 170, "attrs": {} },
