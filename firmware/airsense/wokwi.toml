@@ -1,7 +1,7 @@
-# Configuração para rodar a simulação localmente com a extensão
-# "Wokwi Simulator" do VS Code. Antes, compile o sketch para gerar o
-# firmware em build/ (veja "Simular no VS Code" no README).
+# Configuração para rodar a simulação no VS Code com a extensão
+# "Wokwi Simulator". Compile antes para gerar o firmware em build/
+# (veja docs/como-rodar.md, caminho C).
 [wokwi]
 version = 1
-firmware = 'build/sketch.ino.bin'
-elf = 'build/sketch.ino.elf'
+firmware = 'build/airsense.ino.bin'
+elf = 'build/airsense.ino.elf'

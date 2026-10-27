@@ -1,11 +1,25 @@
-# Saída de compilação (arduino-cli / Arduino IDE / PlatformIO)
+# ---------- Segredos (NUNCA versionar) ----------
+firmware/airsense/secrets.h
+.env
+!.env.example
+
+# ---------- Firmware ----------
 build/
 *.bin
 *.elf
 *.map
 .pio/
 
-# Editores e sistema
+# ---------- API (Python) ----------
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.db
+*.db-journal
+
+# ---------- Editores e sistema ----------
 .vscode/*
 !.vscode/extensions.json
 .idea/
