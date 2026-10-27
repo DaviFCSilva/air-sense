@@ -1,15 +1,16 @@
-name: Compilar firmware
+name: CI
 
-# Compila o sketch para ESP32 a cada push e pull request, garantindo que o
-# código no repositório sempre compila com as bibliotecas de libraries.txt.
+# Roda a cada push e pull request:
+#  - compila o firmware para ESP32 (garante que o código no repositório compila)
+#  - roda os testes da API
 on:
   push:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  esp32:
-    name: ESP32 DevKit C
+  firmware:
+    name: Firmware (ESP32)
     runs-on: ubuntu-latest
     steps:
       - name: Baixar o código
@@ -25,13 +26,37 @@ jobs:
           arduino-cli core update-index
           arduino-cli core install esp32:esp32
           # Lê as bibliotecas de libraries.txt (ignora comentários e linhas vazias)
-          grep -v '^\s*#' simulacao/wokwi/libraries.txt | sed '/^\s*$/d' | while read -r lib; do
+          grep -v '^\s*#' firmware/airsense/libraries.txt | sed '/^\s*$/d' | while read -r lib; do
             arduino-cli lib install "$lib"
           done
 
-      - name: Compilar
-        # O arduino-cli exige que a pasta tenha o mesmo nome do .ino
+      - name: Compilar (sem secrets.h)
+        run: arduino-cli compile --fqbn esp32:esp32:esp32 --warnings default firmware/airsense
+
+      - name: Compilar (com secrets.h de exemplo)
         run: |
-          mkdir -p "$RUNNER_TEMP/sketch"
-          cp simulacao/wokwi/sketch.ino "$RUNNER_TEMP/sketch/"
-          arduino-cli compile --fqbn esp32:esp32:esp32 --warnings default "$RUNNER_TEMP/sketch"
+          cp firmware/airsense/secrets.example.h firmware/airsense/secrets.h
+          arduino-cli compile --fqbn esp32:esp32:esp32 --warnings default firmware/airsense
+
+  api:
+    name: API (testes)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar o Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Instalar dependências
+        run: pip install -r requirements-dev.txt
+
+      - name: Rodar os testes
+        run: pytest -v

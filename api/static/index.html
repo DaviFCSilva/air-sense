@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AirSense · Painel</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --series: #2a78d6;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+    --on-status: #ffffff;
+    --on-warning: #0b0b0b;
+    --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --series: #3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series: #3987e5;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--text-primary); font-family: var(--font); }
+  main { max-width: 1160px; margin: 0 auto; padding: 24px 16px 48px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  h1 small { font-weight: 400; color: var(--text-secondary); font-size: 14px; margin-left: 6px; }
+  .atualizado { color: var(--text-secondary); font-size: 13px; margin-left: auto; }
+
+  .filtros { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .filtros label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+  select, button {
+    font: inherit; font-size: 14px; color: var(--text-primary); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; min-height: 36px;
+  }
+  button { cursor: pointer; }
+  button:hover, select:hover { border-color: var(--axis); }
+
+  .status {
+    display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--border); margin-bottom: 16px;
+  }
+  .status .selo {
+    display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px;
+    padding: 6px 12px; border-radius: 999px; color: var(--on-status);
+    white-space: nowrap; flex: none;
+  }
+  .status p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+  .selo.good { background: var(--good); }
+  .selo.warning { background: var(--warning); color: var(--on-warning); }
+  .selo.critical { background: var(--critical); }
+  .selo.neutro { background: var(--axis); color: var(--text-primary); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .tile .rotulo { font-size: 13px; color: var(--text-secondary); }
+  .tile .valor { font-size: 28px; font-weight: 600; margin: 6px 0 4px; }
+  .tile .valor span { font-size: 14px; font-weight: 400; color: var(--text-secondary); margin-left: 4px; }
+  .tile .estado { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+  .ponto { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+  .ponto.good { background: var(--good); }
+  .ponto.warning { background: var(--warning); }
+  .ponto.critical { background: var(--critical); }
+  .ponto.neutro { background: var(--axis); }
+
+  .graficos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 12px; }
+  .cartao { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px 10px; }
+  .cartao h2 { font-size: 15px; margin: 0 0 2px; }
+  .cartao .sub { font-size: 12px; color: var(--text-secondary); margin: 0 0 8px; }
+  .area { position: relative; height: 210px; transition: opacity .2s; }
+  .area.carregando { opacity: .55; }
+
+  .barra-tabela { display: flex; align-items: center; justify-content: space-between; margin: 24px 0 8px; }
+  .barra-tabela h2 { font-size: 16px; margin: 0; }
+  .tabela-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 8px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); }
+  th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  td { font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+
+  .vazio { padding: 40px 16px; text-align: center; color: var(--text-secondary); background: var(--surface);
+           border: 1px dashed var(--axis); border-radius: 12px; }
+  .vazio code { background: var(--page); padding: 2px 6px; border-radius: 6px; }
+  .aviso { font-size: 13px; color: var(--text-secondary); margin: 0 0 12px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AirSense <small>Qualidade do ar interno</small></h1>
+    <span class="atualizado" id="atualizado">Carregando…</span>
+  </header>
+
+  <div class="filtros">
+    <label>Período
+      <select id="limite">
+        <option value="60">Últimas 60 leituras</option>
+        <option value="180" selected>Últimas 180 leituras</option>
+        <option value="720">Últimas 720 leituras</option>
+      </select>
+    </label>
+    <label>Dispositivo
+      <select id="device"><option value="">Todos</option></select>
+    </label>
+  </div>
+
+  <p class="aviso" id="semGraficos" hidden>Não foi possível carregar a biblioteca de gráficos (sem internet?). Os valores continuam na tabela abaixo.</p>
+
+  <div id="vazio" class="vazio" hidden>
+    Nenhuma leitura recebida ainda. Inicie a simulação no Wokwi ou rode
+    <code>python enviar_teste.py</code> na pasta <code>api/</code>.
+  </div>
+
+  <div id="conteudo" hidden>
+    <section class="status" aria-live="polite">
+      <span class="selo" id="seloNivel"></span>
+      <p id="textoNivel"></p>
+    </section>
+
+    <section class="tiles" id="tiles"></section>
+
+    <section class="graficos" id="graficos"></section>
+
+    <div class="barra-tabela">
+      <h2>Últimas leituras</h2>
+    </div>
+    <div class="tabela-wrap">
+      <table>
+        <thead>
+          <tr><th>Horário</th><th>Dispositivo</th><th>Nível</th><th>Temp. (°C)</th><th>Umid. (%)</th>
+              <th>CO₂ (ppm)</th><th>Poeira (µg/m³)</th><th>Pressão (hPa)</th></tr>
+        </thead>
+        <tbody id="linhas"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// Limites: os mesmos de firmware/airsense/config.h (ANVISA RE nº 9/2003).
+// Se mudar lá, mude aqui também.
+// ---------------------------------------------------------------------------
+const LIMITES = {
+  co2:    { atencao: 800, alerta: 1000 },
+  poeira: { atencao: 64,  alerta: 80 },
+  temperatura: { min: 23, max: 26 },
+  umidade:     { min: 40, max: 65 },
+};
+const ATUALIZAR_A_CADA_MS = 5000;
+const SEM_DADOS_RECENTES_S = 30;
+
+const NIVEIS = [
+  { classe: "good",     icone: "✓", nome: "OK",      texto: "Ar dentro dos limites da ANVISA RE nº 9/2003." },
+  { classe: "warning",  icone: "!", nome: "Atenção", texto: "Algum valor se aproxima do limite ou está fora da faixa de conforto." },
+  { classe: "critical", icone: "✕", nome: "Alerta",  texto: "CO₂ ou poeira acima do limite da norma. Ventile o ambiente." },
+];
+
+const METRICAS = [
+  { campo: "co2",         nome: "CO₂",                 unidade: "ppm",   casas: 0, refs: [{ v: 800, t: "Atenção 800" }, { v: 1000, t: "Limite 1000" }] },
+  { campo: "poeira",      nome: "Material particulado", unidade: "µg/m³", casas: 0, min: 0, refs: [{ v: 64, t: "Atenção 64" }, { v: 80, t: "Limite 80" }] },
+  { campo: "temperatura", nome: "Temperatura",          unidade: "°C",    casas: 1, refs: [{ v: 23, t: "Mín. 23" }, { v: 26, t: "Máx. 26" }] },
+  { campo: "umidade",     nome: "Umidade relativa",     unidade: "%",     casas: 0, refs: [{ v: 40, t: "Mín. 40" }, { v: 65, t: "Máx. 65" }] },
+  { campo: "pressao",     nome: "Pressão",              unidade: "hPa",   casas: 0, refs: [] },
+];
+
+const $ = (id) => document.getElementById(id);
+const fmt = (v, casas) => v === null || v === undefined ? "—"
+  : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
+const hora = (iso) => new Date(iso).toLocaleTimeString("pt-BR");
+const cor = (nome) => getComputedStyle(document.documentElement).getPropertyValue(nome).trim();
+
+// Estado de cada métrica para o ponto colorido do tile (sempre com texto ao lado)
+function estadoDe(campo, v) {
+  if (v === null || v === undefined) return { classe: "neutro", texto: "Sem leitura (falha no sensor)" };
+  if (campo === "co2" || campo === "poeira") {
+    const l = LIMITES[campo];
+    if (v > l.alerta) return { classe: "critical", texto: "Acima do limite" };
+    if (v > l.atencao) return { classe: "warning", texto: "Perto do limite" };
+    return { classe: "good", texto: "Dentro do limite" };
+  }
+  if (campo === "temperatura" || campo === "umidade") {
+    const l = LIMITES[campo];
+    if (v < l.min) return { classe: "warning", texto: "Abaixo da faixa" };
+    if (v > l.max) return { classe: "warning", texto: "Acima da faixa" };
+    return { classe: "good", texto: "Na faixa de conforto" };
+  }
+  return { classe: "neutro", texto: "Informativo" };
+}
+
+// ---------- Tiles e status ----------
+function montarTiles() {
+  const raiz = $("tiles");
+  for (const m of METRICAS) {
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    tile.innerHTML = '<div class="rotulo"></div><div class="valor"><b></b><span></span></div>' +
+                     '<div class="estado"><i class="ponto"></i><span></span></div>';
+    tile.querySelector(".rotulo").textContent = m.nome;
+    tile.querySelector(".valor span").textContent = m.unidade;
+    tile.id = "tile-" + m.campo;
+    raiz.appendChild(tile);
+  }
+}
+
+function atualizarTiles(ultima) {
+  for (const m of METRICAS) {
+    const tile = $("tile-" + m.campo);
+    const v = ultima[m.campo];
+    const e = estadoDe(m.campo, v);
+    tile.querySelector(".valor b").textContent = fmt(v, m.casas);
+    tile.querySelector(".ponto").className = "ponto " + e.classe;
+    tile.querySelector(".estado span").textContent = e.texto;
+  }
+  const n = NIVEIS[ultima.nivel] || NIVEIS[0];
+  const selo = $("seloNivel");
+  selo.className = "selo " + n.classe;
+  selo.textContent = n.icone + "  " + n.nome;
+  $("textoNivel").textContent = n.texto + " Dispositivo " + ultima.device + ", às " + hora(ultima.recebido_em) + ".";
+}
+
+// ---------- Gráficos (um por métrica: uma escala por gráfico) ----------
+const graficos = {};
+
+// Linhas de referência horizontais (limites), com rótulo em texto
+const pluginLimites = {
+  id: "limites",
+  afterDatasetsDraw(chart, _args, opts) {
+    const { ctx, chartArea: a, scales: { y } } = chart;
+    ctx.save();
+    ctx.font = "11px " + cor("--font");
+    for (const r of opts.refs || []) {
+      if (r.v < y.min || r.v > y.max) continue;
+      const py = y.getPixelForValue(r.v);
+      ctx.strokeStyle = cor("--text-muted");
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(a.left, py); ctx.lineTo(a.right, py); ctx.stroke();
+      ctx.setLineDash([]);
+      // Rótulo sobre um fundo da cor do cartão, para não se misturar à linha de dados
+      const largura = ctx.measureText(r.t).width + 8;
+      const topo = Math.max(a.top, py - 17);
+      ctx.fillStyle = cor("--surface");
+      ctx.fillRect(a.right - largura, topo, largura, 15);
+      ctx.fillStyle = cor("--text-secondary");
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillText(r.t, a.right - 4, topo + 7.5);
+    }
+    ctx.restore();
+  },
+};
+
+// Linha vertical que acompanha o mouse
+const pluginMira = {
+  id: "mira",
+  afterDraw(chart) {
+    const ativo = chart.tooltip && chart.tooltip.getActiveElements();
+    if (!ativo || !ativo.length) return;
+    const x = ativo[0].element.x, { ctx, chartArea: a } = chart;
+    ctx.save();
+    ctx.strokeStyle = cor("--axis"); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, a.top); ctx.lineTo(x, a.bottom); ctx.stroke();
+    ctx.restore();
+  },
+};
+
+function montarGraficos() {
+  const raiz = $("graficos");
+  for (const m of METRICAS.filter((m) => m.campo !== "pressao")) {
+    const cartao = document.createElement("div");
+    cartao.className = "cartao";
+    cartao.innerHTML = '<h2></h2><p class="sub"></p><div class="area"><canvas></canvas></div>';
+    cartao.querySelector("h2").textContent = m.nome + " (" + m.unidade + ")";
+    cartao.querySelector(".sub").textContent = m.refs.length ? "Linhas tracejadas: limites da ANVISA RE nº 9/2003" : "";
+    raiz.appendChild(cartao);
+
+    graficos[m.campo] = new Chart(cartao.querySelector("canvas"), {
+      type: "line",
+      data: { labels: [], datasets: [{ label: m.nome, data: [], borderWidth: 2, pointRadius: 0,
+                                       pointHoverRadius: 4, tension: 0.25, spanGaps: false }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: false },
+          limites: { refs: m.refs },
+          tooltip: {
+            displayColors: false,
+            callbacks: {
+              title: (itens) => itens[0].label,
+              label: (item) => fmt(item.parsed.y, m.casas) + " " + m.unidade,
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { maxTicksLimit: 6, maxRotation: 0 }, grid: { display: false } },
+          // A escala sempre inclui as linhas de limite, com folga para os rótulos
+          y: {
+            grace: "10%", ticks: { maxTicksLimit: 5 }, min: m.min,
+            suggestedMin: m.refs.length ? Math.min(...m.refs.map((r) => r.v)) * 0.95 : undefined,
+            suggestedMax: m.refs.length ? Math.max(...m.refs.map((r) => r.v)) * 1.08 : undefined,
+          },
+        },
+      },
+      plugins: [pluginLimites, pluginMira],
+    });
+  }
+  aplicarTema();
+}
+
+// Cores dos gráficos vêm das variáveis CSS (claro/escuro)
+function aplicarTema() {
+  Chart.defaults.font.family = cor("--font");
+  Chart.defaults.locale = "pt-BR";
+  for (const g of Object.values(graficos)) {
+    const ds = g.data.datasets[0];
+    ds.borderColor = cor("--series");
+    ds.pointHoverBackgroundColor = cor("--series");
+    ds.pointHoverBorderColor = cor("--surface");
+    g.options.scales.x.ticks.color = cor("--text-muted");
+    g.options.scales.y.ticks.color = cor("--text-muted");
+    g.options.scales.y.grid.color = cor("--grid");
+    g.options.scales.y.border = { color: cor("--axis") };
+    g.options.scales.x.border = { color: cor("--axis") };
+    g.update("none");
+  }
+}
+
+function atualizarGraficos(leituras) {
+  const cronologica = [...leituras].reverse();
+  const rotulos = cronologica.map((l) => hora(l.recebido_em));
+  for (const [campo, g] of Object.entries(graficos)) {
+    g.data.labels = rotulos;
+    g.data.datasets[0].data = cronologica.map((l) => l[campo]);
+    g.update("none");
+  }
+}
+
+// ---------- Tabela (todos os valores sem depender do mouse) ----------
+function atualizarTabela(leituras) {
+  const corpo = $("linhas");
+  corpo.replaceChildren();
+  for (const l of leituras.slice(0, 20)) {
+    const tr = document.createElement("tr");
+    const n = NIVEIS[l.nivel] || NIVEIS[0];
+    const celulas = [hora(l.recebido_em), l.device, n.icone + " " + n.nome, fmt(l.temperatura, 1),
+                     fmt(l.umidade, 0), fmt(l.co2, 0), fmt(l.poeira, 0), fmt(l.pressao, 0)];
+    for (const c of celulas) {
+      const td = document.createElement("td");
+      td.textContent = c;
+      tr.appendChild(td);
+    }
+    corpo.appendChild(tr);
+  }
+}
+
+// ---------- Busca periódica ----------
+let ultimaRecebida = null;
+
+function atualizarListaDispositivos(leituras) {
+  const sel = $("device");
+  const existentes = new Set([...sel.options].map((o) => o.value));
+  for (const d of new Set(leituras.map((l) => l.device))) {
+    if (existentes.has(d)) continue;
+    const opt = document.createElement("option");
+    opt.value = d; opt.textContent = d;
+    sel.appendChild(opt);
+  }
+}
+
+async function carregar() {
+  const params = new URLSearchParams({ limite: $("limite").value });
+  if ($("device").value) params.set("device", $("device").value);
+  document.querySelectorAll(".area").forEach((a) => a.classList.add("carregando"));
+  try {
+    const resp = await fetch("/leituras?" + params);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const leituras = await resp.json();
+    $("vazio").hidden = leituras.length > 0;
+    $("conteudo").hidden = leituras.length === 0;
+    if (leituras.length) {
+      if (!$("device").value) atualizarListaDispositivos(leituras);
+      ultimaRecebida = leituras[0].recebido_em;
+      atualizarTiles(leituras[0]);
+      atualizarGraficos(leituras);
+      atualizarTabela(leituras);
+    }
+    atualizarRelogio();
+  } catch (erro) {
+    $("atualizado").textContent = "Sem conexão com a API (" + erro.message + ")";
+  } finally {
+    document.querySelectorAll(".area").forEach((a) => a.classList.remove("carregando"));
+  }
+}
+
+function atualizarRelogio() {
+  if (!ultimaRecebida) { $("atualizado").textContent = "Aguardando a primeira leitura…"; return; }
+  const s = Math.round((Date.now() - new Date(ultimaRecebida)) / 1000);
+  $("atualizado").textContent = s > SEM_DADOS_RECENTES_S
+    ? "⚠ Sem dados recentes · última leitura há " + s + " s"
+    : "Última leitura há " + Math.max(0, s) + " s";
+}
+
+montarTiles();
+if (window.Chart) montarGraficos(); else $("semGraficos").hidden = false;
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => window.Chart && aplicarTema());
+$("limite").addEventListener("change", carregar);
+$("device").addEventListener("change", carregar);
+carregar();
+setInterval(carregar, ATUALIZAR_A_CADA_MS);
+setInterval(atualizarRelogio, 1000);
+</script>
+</body>
+</html>
